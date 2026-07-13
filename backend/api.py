@@ -1,4 +1,6 @@
 # backend/api.py
+#from backend.quality_signals_api import router as quality_router
+#app.include_router(quality_router)
 # ─────────────────────────────────────────────────────────────────────────────
 # PURPOSE : A FastAPI server that exposes the fully-scored data (produced by
 #           ingest.py -> features.py -> isolation_forest.py -> scoring.py)
@@ -51,11 +53,11 @@ import os
 import sys
 import unittest
 
+import app
 import pandas as pd
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.testclient import TestClient
-
 PROCESSED_DIR = "data/processed"
 
 # Columns that must exist in a stock's CSV for it to be servable by this API.

@@ -1,0 +1,87 @@
+========================================================================
+  INSIDER TRADING PATTERN DETECTOR — DAILY REPORT
+  Date        : 2026-06-28
+  Generated at: 16:31:45 IST
+  Stocks monitored: 35
+  Alert threshold : Suspicion Score >= 65
+  High alert      : Suspicion Score >= 80
+========================================================================
+
+  🚨 HIGH ALERTS — Immediate Attention Required
+  --------------------------------------------------------------------
+  None today.
+
+  ⚡ FLAGGED TODAY — Worth Monitoring
+  --------------------------------------------------------------------
+  →  MSUMI        [Auto      ]  Score:  76.93  AVR: 25.08  CAR:  0.0923  IF: 1
+
+  📊 ALL STOCKS — Today's Scores by Sector
+  --------------------------------------------------------------------
+  Ticker       Sector        Close   Today  MaxEver MaxDate       TotFlag
+  --------------------------------------------------------------------
+
+  ── Auto ──
+   ⚡ MSUMI        Auto          41.26   76.93    81.97 2024-02-01         14
+     BHARATFORG   Auto        2145.30   16.00   100.00 2020-08-13         34
+     ENDURANCE    Auto        2699.20    2.00    91.62 2019-03-06         50
+     SONACOMS     Auto         619.25    0.00    86.91 2022-08-18         18
+
+  ── CapGoods ──
+     APARINDS     CapGoods   16022.00   18.00   100.00 2022-06-14         77
+     CGPOWER      CapGoods     942.10    0.00   100.00 2019-02-14         76
+     RITES        CapGoods     208.88    0.00   100.00 2022-10-10         51
+     TEXRAIL      CapGoods     110.00    0.00   100.00 2020-01-09         59
+     VESUVIUS     CapGoods     469.05    0.00   100.00 2023-05-16         59
+
+  ── Chemicals ──
+     PRIVISCL     Chemicals   3550.50   18.00   100.00 2020-02-17         73
+     BALAMINES    Chemicals   1989.00   16.00   100.00 2017-11-06         84
+     AARTIIND     Chemicals    466.05   14.00    98.77 2017-12-22         44
+     DEEPAKNTR    Chemicals   1622.40    0.00   100.00 2020-08-24         54
+
+  ── Defence ──
+     PARAS        Defence     1233.75   40.03   100.00 2024-05-29         47
+     ASTRAMICRO   Defence     1721.70   35.07   100.00 2020-06-16         64
+     DATAPATTNS   Defence     4506.60   14.00   100.00 2024-02-26         35
+     AVANTEL      Defence      171.83    0.00   100.00 2025-06-05         14
+
+  ── NBFC ──
+     CHOLAFIN     NBFC        1799.20   35.54   100.00 2020-06-19         52
+     POONAWALLA   NBFC         440.30   28.18   100.00 2019-12-03         71
+     FIVESTAR     NBFC         497.00   27.57   100.00 2026-04-21         33
+     FEDFINA      NBFC         148.37   14.68    90.90 2026-01-14         11
+     MUTHOOTFIN   NBFC        3025.60    2.00   100.00 2020-06-18         42
+
+  ── Pharma ──
+     INNOVACAP    Pharma       941.35    6.00    85.37 2026-05-04         10
+     SOLARA       Pharma       568.05    4.00   100.00 2018-07-10         74
+     AARTIDRUGS   Pharma       372.70    0.00   100.00 2016-09-23         72
+     FDC          Pharma       408.30    0.00   100.00 2020-08-05         60
+     LAURUSLABS   Pharma      1450.00    0.00   100.00 2020-04-21         57
+
+  ── Power ──
+     GENUSPOWER   Power        334.00   20.84   100.00 2021-03-09         81
+     PIGL         Power        112.70   18.00   100.00 2018-12-28         80
+     CESC         Power        168.03   12.00    91.06 2020-04-20         39
+     RTNPOWER     Power          9.12    0.00   100.00 2017-11-10        100
+     SKIPPER      Power        533.15    0.00   100.00 2020-06-24         78
+
+  ── Railways ──
+     IRCON        Railways     134.16    0.00   100.00 2020-02-19         67
+     RVNL         Railways     240.85    0.00   100.00 2021-01-08         73
+     TITAGARH     Railways     888.45    0.00   100.00 2019-09-24         65
+
+  --------------------------------------------------------------------
+  SUMMARY
+  --------------------------------------------------------------------
+  Total stocks monitored  : 35
+  High alerts today       : 0
+  Flagged today           : 1
+  Clean (score < 65)      : 34
+  Average score today     : 11.97
+  Highest score today     : 76.93
+  Most suspicious stock   : MSUMI (76.93) [Auto]
+
+========================================================================
+  Report saved to: data/reports/daily_report_2026-06-28.txt
+========================================================================

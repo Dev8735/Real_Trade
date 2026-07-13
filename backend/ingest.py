@@ -30,18 +30,72 @@ import yfinance as yf
 
 
 # All NSE tickers on yfinance end with .NS
-# A mix of large-caps across sectors — energy, IT, banking, auto, pharma
+# 38 stocks across 8 sectors — Defence, Power, CapGoods, Pharma,
+# Chemicals, NBFC, Railways, Auto (RITES and TEXRAIL appear in both
+# CapGoods and Railways in the original list — deduplicated here)
+# ──────────────────────────────────────────────────────────────────────────
+# STOCK UNIVERSE — 39 NSE stocks across 8 sectors
+# Source: user-defined sector basket (no large-cap index stocks)
+# NOTE : RITES and TEXRAIL appear in both CapGoods and Railways in the
+#        original list — they are included once here (deduplicated).
+#        PIGL (Power & Instrumentation Gujarat) was listed Apr 2018,
+#        so yfinance will return ~8 years of data for it instead of 10.
+# ──────────────────────────────────────────────────────────────────────────
 TICKERS = [
-    "RELIANCE.NS",    # Energy / Conglomerate
-    "INFY.NS",        # IT Services
-    "TCS.NS",         # IT Services
-    "HDFCBANK.NS",    # Banking
-    "WIPRO.NS",       # IT Services
-    "TATAMOTORS.NS",  # Automobile
-    "ADANIENT.NS",    # Conglomerate (high volatility — good test case)
-    "ZOMATO.NS",      # Consumer Tech
-    "BAJFINANCE.NS",  # NBFC / Finance
-    "SUNPHARMA.NS",   # Pharma
+    # ── Defence ──────────────────────────────────────────────────────────────
+    "PARAS.NS",        # Paras Defence and Space Technologies
+    "DATAPATTNS.NS",   # Data Patterns (India)
+    "ASTRAMICRO.NS",   # Astra Microwave Products
+    "SIKAINTERP.NS",   # Sika Interplant Systems
+    "AVANTEL.NS",      # Avantel
+
+    # ── Power ─────────────────────────────────────────────────────────────────
+    "CESC.NS",         # CESC
+    "GENUSPOWER.NS",   # Genus Power Infrastructures
+    "SKIPPER.NS",      # Skipper
+    "RTNPOWER.NS",     # RattanIndia Power
+    "PIGL.NS",         # Power & Instrumentation (Gujarat) — listed Apr 2018
+
+    # ── Capital Goods ─────────────────────────────────────────────────────────
+    "CGPOWER.NS",      # CG Power & Industrial Solutions
+    "APARINDS.NS",     # Apar Industries
+    "RITES.NS",        # RITES (also in Railways — not duplicated below)
+    "VESUVIUS.NS",     # Vesuvius India
+    "TEXRAIL.NS",      # Texmaco Rail & Engineering (also in Railways — not duplicated)
+
+    # ── Pharma ────────────────────────────────────────────────────────────────
+    "LAURUSLABS.NS",   # Laurus Labs
+    "AARTIDRUGS.NS",   # Aarti Drugs
+    "INNOVACAP.NS",    # Innova Captab
+    "SOLARA.NS",       # Solara Active Pharma Sciences
+    "FDC.NS",          # FDC
+
+    # ── Chemicals ─────────────────────────────────────────────────────────────
+    "AARTIIND.NS",     # Aarti Industries
+    "DEEPAKNTR.NS",    # Deepak Nitrite
+    "NEONAMINES.NS",   # Neogen Chemicals
+    "BALAMINES.NS",    # Balaji Amines
+    "PRIVISCL.NS",     # Privi Speciality Chemicals
+
+    # ── NBFC ──────────────────────────────────────────────────────────────────
+    "POONAWALLA.NS",   # Poonawalla Fincorp
+    "FIVESTAR.NS",     # Five Star Business Finance
+    "MUTHOOTFIN.NS",   # Muthoot Finance
+    "CHOLAFIN.NS",     # Cholamandalam Investment and Finance
+    "FEDFINA.NS",      # Fedbank Financial Services
+
+    # ── Railways ─────────────────────────────────────────────────────────────
+    "TITAGARH.NS",     # Titagarh Rail Systems
+    "RVNL.NS",         # Rail Vikas Nigam
+    "IRCON.NS",        # Ircon International
+    # RITES and TEXRAIL already listed under CapGoods above
+
+    # ── Auto ──────────────────────────────────────────────────────────────────
+    "SONACOMS.NS",     # Sona BLW Precision Forgings
+    "ENDURANCE.NS",    # Endurance Technologies
+    "MSUMI.NS",        # Motherson Sumi Wiring India
+    "TUBEINVEST.NS",   # Tube Investments of India
+    "BHARATFORG.NS",   # Bharat Forge
 ]
 
 # All raw CSV files are saved here
@@ -52,7 +106,7 @@ RAW_DIR = "data/raw"
 # SECTION 2 — fetch_ohlcv()
 # ══════════════════════════════════════════════════════════════════════════════
 
-def fetch_ohlcv(ticker: str, period: str = "6mo") -> pd.DataFrame | None:
+def fetch_ohlcv(ticker: str, period: str = "10y") -> pd.DataFrame | None:
     """
     Downloads daily OHLCV data for a single NSE-listed stock.
 
@@ -65,7 +119,7 @@ def fetch_ohlcv(ticker: str, period: str = "6mo") -> pd.DataFrame | None:
 
     period : str
         How far back to fetch.
-        "6mo" = last ~126 trading days  (default — enough for anomaly baseline)
+        "10y" = last ~2500 trading days (default — 10 years for robust baseline)
         "1mo" = last ~22 trading days   (used by tests to keep them fast)
         "1y"  = last ~252 trading days
 
@@ -129,7 +183,7 @@ def fetch_ohlcv(ticker: str, period: str = "6mo") -> pd.DataFrame | None:
 # SECTION 3 — fetch_nifty()
 # ══════════════════════════════════════════════════════════════════════════════
 
-def fetch_nifty(period: str = "6mo") -> pd.DataFrame | None:
+def fetch_nifty(period: str = "10y") -> pd.DataFrame | None:
     """
     Downloads Nifty 50 index data and computes its daily percentage return.
 
@@ -197,7 +251,7 @@ def fetch_nifty(period: str = "6mo") -> pd.DataFrame | None:
 # SECTION 4 — run_ingestion()
 # ══════════════════════════════════════════════════════════════════════════════
 
-def run_ingestion(tickers: list = None, period: str = "6mo") -> dict:
+def run_ingestion(tickers: list = None, period: str = "10y") -> dict:
     """
     Master function — downloads all tickers + Nifty 50 in one call.
 

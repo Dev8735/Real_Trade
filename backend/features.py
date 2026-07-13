@@ -26,12 +26,12 @@
 #   Section 5 — compute_vol_spike()  : Volatility Spike
 #   Section 6 — compute_return_z()   : Return Z-score
 #   Section 7 — build_features()     : master function — runs all 4 signals
-#   Section 8 — Tests                : 20 integrated tests using unittest
+#   Section 8 — Tests                : 24 integrated tests using unittest
 #   Section 9 — Entry point          : run features OR tests from CLI
 #
 # HOW TO RUN:
 #   python backend/features.py           → computes features for all stocks
-#   python backend/features.py --test    → runs all 20 tests
+#   python backend/features.py --test    → runs all 24 tests
 #
 # DEPENDENCY:
 #   ingest.py must have been run first so data/raw/*.csv files exist.
@@ -57,8 +57,9 @@ PROCESSED_DIR = "data/processed"
 # Rolling window sizes (in trading days)
 # SHORT_WINDOW : the "suspicious" period just before a corporate event
 # LONG_WINDOW  : the historical baseline we compare the short window against
-SHORT_WINDOW = 5    # ~1 trading week
-LONG_WINDOW  = 60   # ~3 trading months
+SHORT_WINDOW = 5    # ~1 trading week  (unchanged — best suspicious window size)
+LONG_WINDOW  = 252  # ~1 full trading year (was 60 days/3 months — much stronger
+                    # baseline with 10 years of data available)
 
 # Z-score threshold: daily returns beyond ±2.5 standard deviations are flagged
 Z_SCORE_THRESHOLD = 2.5
@@ -69,8 +70,22 @@ VOL_SPIKE_RATIO = 2.0
 
 # Tickers to process — must match those downloaded by ingest.py
 TICKERS = [
-    "RELIANCE", "INFY", "TCS", "HDFCBANK", "WIPRO",
-    "TATAMOTORS", "ADANIENT", "ZOMATO", "BAJFINANCE", "SUNPHARMA",
+    # Defence
+    "PARAS", "DATAPATTNS", "ASTRAMICRO", "SIKAINTERP", "AVANTEL",
+    # Power (PIGL = Power & Instrumentation Gujarat, listed Apr 2018)
+    "CESC", "GENUSPOWER", "SKIPPER", "RTNPOWER", "PIGL",
+    # Capital Goods (RITES and TEXRAIL also cover Railways — not duplicated)
+    "CGPOWER", "APARINDS", "RITES", "VESUVIUS", "TEXRAIL",
+    # Pharma
+    "LAURUSLABS", "AARTIDRUGS", "INNOVACAP", "SOLARA", "FDC",
+    # Chemicals
+    "AARTIIND", "DEEPAKNTR", "NEONAMINES", "BALAMINES", "PRIVISCL",
+    # NBFC
+    "POONAWALLA", "FIVESTAR", "MUTHOOTFIN", "CHOLAFIN", "FEDFINA",
+    # Railways (RITES and TEXRAIL already above — not duplicated)
+    "TITAGARH", "RVNL", "IRCON",
+    # Auto
+    "SONACOMS", "ENDURANCE", "MSUMI", "TUBEINVEST", "BHARATFORG",
 ]
 
 
@@ -657,13 +672,34 @@ class TestLoadFunctions(unittest.TestCase):
     def test_load_nifty_returns_none_for_missing_file(self):
         """
         Same graceful None for load_nifty() when benchmark CSV is missing.
+
+        WHY sys.modules[__name__] INSTEAD OF "import backend.features":
+        This file is run directly as `python backend/features.py --test`,
+        which means it executes as the __main__ module, not as the
+        package module backend.features. Doing `import backend.features`
+        in that situation creates a SECOND, independent copy of this file
+        with its own separate RAW_DIR variable. Patching that copy's
+        RAW_DIR has no effect on the load_nifty() function actually being
+        called here (which belongs to __main__), so the real RAW_DIR is
+        still used, the real NIFTY50_benchmark.csv is found, and the test
+        fails because it gets a real DataFrame instead of None.
+
+        sys.modules[__name__] always refers to whichever module is
+        currently executing — __main__ when run directly, or
+        backend.features when imported normally — so the patch always
+        lands on the correct, active copy of RAW_DIR.
         """
-        # Temporarily point RAW_DIR to a path that definitely doesn't exist
-        import backend.features as feat_module
-        original = feat_module.RAW_DIR
-        feat_module.RAW_DIR = "data/definitely_does_not_exist"
-        result = load_nifty()
-        feat_module.RAW_DIR = original
+        this_module = sys.modules[__name__]
+        original = this_module.RAW_DIR
+        this_module.RAW_DIR = "data/definitely_does_not_exist"
+        try:
+            result = load_nifty()
+        finally:
+            # finally guarantees RAW_DIR is restored even if the
+            # assertion below fails — otherwise every test that runs
+            # after this one would silently use the wrong RAW_DIR.
+            this_module.RAW_DIR = original
+
         self.assertIsNone(result,
             "load_nifty() should return None for a missing file")
 
