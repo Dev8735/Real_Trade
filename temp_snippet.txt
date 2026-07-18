@@ -1,0 +1,29 @@
+﻿def check_volume_pattern(ticker, period="10d", interval="1d"):
+    """
+    Compare today's (most recent) volume against the average of prior days.
+    Returns whether volume is "unusual" based on the threshold multiplier.
+    """
+    data = yf.download(ticker, period=period, interval=interval, progress=False)
+
+    if data.empty or len(data) < 2:
+        return {"unusual_volume": False, "today_volume": None, "avg_volume": None, "ratio": None}
+
+    # Handle both flat and MultiIndex columns (yfinance version differences)
+    if isinstance(data.columns, pd.MultiIndex):
+        volume_series = data["Volume"].iloc[:, 0]
+    else:
+        volume_series = data["Volume"]
+
+    today_volume = float(volume_series.iloc[-1])
+    prior_days = volume_series.iloc[:-1]
+    avg_volume = float(prior_days.mean())
+
+    ratio = today_volume / avg_volume if avg_volume > 0 else 0
+    unusual = ratio >= VOLUME_THRESHOLD_MULTIPLIER
+
+    return {
+        "unusual_volume": unusual,
+        "today_volume": today_volume,
+        "avg_volume": avg_volume,
+        "ratio": round(ratio, 2)
+    }
