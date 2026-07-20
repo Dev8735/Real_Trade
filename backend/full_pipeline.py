@@ -5,18 +5,19 @@ Stage 1: Scan all NSE stocks for unusual volume
 Stage 2: Cross-check against block/bulk deals (explain known spikes)
 Stage 3: Compare against Nifty (filter out market-wide noise)
 Stage 4: Run news + sentiment on top movers
-Stage 5: Score confidence tier, split into CONFIRMED (has news) vs UNCONFIRMED (volume/price only)
-Stage 6: Send HIGH signals from both categories to Telegram, clearly labeled
-Stage 7: Log everything for accuracy tracking
+Stage 5: Score confirmed/unconfirmed signal + confidence
+Stage 6: Add risk context (stop-loss, liquidity) to HIGH signals
+Stage 7: Send HIGH signals to Telegram
+Stage 8: Log everything for accuracy tracking
 
 Decision-support tool only, not financial advice.
-UNCONFIRMED signals carry more risk - no news corroboration, verify independently before acting.
 """
 
 from volume_screener import scan_all_stocks
 from sentiment_analyzer import analyze_sentiment
 from block_deal_checker import get_todays_deal_symbols, check_stock_for_deals
 from market_context import get_nifty_change, get_daily_change_pct, classify_relative_strength
+from risk_manager import get_volatility_stop_loss, check_liquidity_risk
 from dotenv import load_dotenv
 from pathlib import Path
 import os, requests, json, urllib.request, urllib.parse, time, csv
@@ -37,12 +38,10 @@ NEWSAPI_DAILY_LIMIT_BUFFER = 30
 SIGNALS_LOG_PATH = PROJECT_ROOT / "data" / "signals_log.csv"
 TICKER_CACHE = PROJECT_ROOT / "data" / "nse_tickers.csv"
 
-# CONFIRMED thresholds (has news)
 CONFIRMED_HIGH_MIN_VOLUME = 5.0
 CONFIRMED_HIGH_MIN_ARTICLES = 2
 CONFIRMED_HIGH_MIN_SENTIMENT = 2
 
-# UNCONFIRMED thresholds (no news, volume+price only - stricter on volume/move size to compensate)
 UNCONFIRMED_HIGH_MIN_VOLUME = 8.0
 UNCONFIRMED_HIGH_MIN_MOVE_PCT = 5.0
 UNCONFIRMED_MEDIUM_MIN_VOLUME = 3.0
@@ -67,7 +66,6 @@ def fetch_relevant_news(ticker_symbol, page_size=10):
     company_name = COMPANY_NAMES.get(ticker_symbol, ticker_symbol)
     clean_name = company_name.replace("Limited", "").replace("Ltd", "").strip()
     search_query = f'"{clean_name}"'
-
     url = "https://newsapi.org/v2/everything"
     try:
         resp = requests.get(url, params={
@@ -111,11 +109,6 @@ def get_current_price(ticker_symbol):
 
 def score_signal(volume_ratio, relevant_article_count, sentiment_score, has_deal_explanation,
                   relative_strength, stock_change_pct):
-    """
-    Returns (signal_type, confidence).
-    signal_type: "CONFIRMED" (has relevant news) or "UNCONFIRMED" (volume/price only)
-    confidence: HIGH / MEDIUM / LOW within that type
-    """
     if has_deal_explanation:
         return "EXPLAINED", "LOW"
 
@@ -149,11 +142,11 @@ def run_full_pipeline():
     top_movers = scan_all_stocks(limit=None, top_n=TOP_N, debug=False)
     print(f"Found top {len(top_movers)} volume movers.\n")
 
-    print("=== STAGE 2: Fetching block/bulk deals to explain known spikes ===")
+    print("=== STAGE 2: Fetching block/bulk deals ===")
     deals_dict = get_todays_deal_symbols()
     print(f"Found deal data for {len(deals_dict)} stocks today.\n")
 
-    print("=== STAGE 3: Fetching Nifty index for market context ===")
+    print("=== STAGE 3: Fetching Nifty index ===")
     nifty_change = get_nifty_change()
     print(f"Nifty 50 today: {nifty_change}%\n")
 
@@ -168,7 +161,6 @@ def run_full_pipeline():
         headlines = fetch_relevant_news(ticker_clean)
         sentiment = get_sentiment_for_headlines(headlines)
         price = get_current_price(ticker_clean)
-
         stock_change = get_daily_change_pct(f"{ticker_clean}.NS")
         relative_strength = classify_relative_strength(stock_change, nifty_change)
 
@@ -176,6 +168,15 @@ def run_full_pipeline():
             stock["ratio"], len(headlines), sentiment["score"],
             bool(deal_explanation), relative_strength, stock_change
         )
+
+        risk_info = {"stop_loss_pct": None, "liquidity_risk": None}
+        if confidence == "HIGH":
+            vol_data = get_volatility_stop_loss(ticker_clean)
+            liq_data = check_liquidity_risk(ticker_clean)
+            if vol_data:
+                risk_info["stop_loss_pct"] = vol_data["suggested_stop_loss_pct"]
+            if liq_data:
+                risk_info["liquidity_risk"] = liq_data["liquidity_risk"]
 
         final_signals.append({
             "ticker": ticker_clean,
@@ -189,7 +190,9 @@ def run_full_pipeline():
             "relative_strength": relative_strength,
             "signal_type": signal_type,
             "confidence": confidence,
-            "deal_explanation": deal_explanation
+            "deal_explanation": deal_explanation,
+            "stop_loss_pct": risk_info["stop_loss_pct"],
+            "liquidity_risk": risk_info["liquidity_risk"]
         })
 
         time.sleep(0.3)
@@ -214,30 +217,34 @@ def run_full_pipeline():
 
 
 def format_message(confirmed_high, unconfirmed_high, nifty_change):
-    lines = [f"📊 Signal Summary (Nifty: {nifty_change}%)\n"]
+    lines = [f" Signal Summary (Nifty: {nifty_change}%)\n"]
 
     if confirmed_high:
-        lines.append("✅ CONFIRMED signals (news + volume + market divergence):")
+        lines.append(" CONFIRMED signals (news + volume + market divergence):")
         for s in confirmed_high:
-            emoji = "🟢" if s["sentiment_label"] == "positive" else "🔴"
+            emoji = "" if s["sentiment_label"] == "positive" else ""
             lines.append(
                 f"{emoji} {s['ticker']}: {s['volume_ratio']}x vol | {s['stock_change_pct']}% "
                 f"({s['relative_strength']}) | {s['sentiment_label']}"
             )
             if s["sample_headline"]:
-                lines.append(f"    → {s['sample_headline']}")
+                lines.append(f"     {s['sample_headline']}")
+            if s["stop_loss_pct"]:
+                lines.append(f"     Suggested stop-loss: {s['stop_loss_pct']}% | Liquidity: {s['liquidity_risk']}")
         lines.append("")
 
     if unconfirmed_high:
-        lines.append("⚠️ UNCONFIRMED signals (big move, NO news found - higher risk, verify yourself):")
+        lines.append(" UNCONFIRMED signals (big move, NO news - higher risk, verify yourself):")
         for s in unconfirmed_high:
             lines.append(
-                f"❓ {s['ticker']}: {s['volume_ratio']}x vol | {s['stock_change_pct']}% "
+                f" {s['ticker']}: {s['volume_ratio']}x vol | {s['stock_change_pct']}% "
                 f"({s['relative_strength']}) | no news coverage"
             )
+            if s["stop_loss_pct"]:
+                lines.append(f"     Suggested stop-loss: {s['stop_loss_pct']}% | Liquidity: {s['liquidity_risk']}")
         lines.append("")
 
-    lines.append("⚠️ Decision-support only, not financial advice. UNCONFIRMED signals lack news corroboration - research before acting.")
+    lines.append(" Decision-support only, not financial advice. Stop-loss % is a volatility-based reference, not a guarantee. Always verify independently.")
     return "\n".join(lines)
 
 
@@ -252,6 +259,7 @@ def log_signals_to_csv(signals, nifty_change):
                 "signal_date", "ticker", "volume_ratio", "sentiment_label", "sentiment_score",
                 "headline_count", "sample_headline", "price_at_signal", "stock_change_pct",
                 "nifty_change_pct", "relative_strength", "signal_type", "confidence", "deal_explanation",
+                "stop_loss_pct", "liquidity_risk",
                 "checked_1d", "checked_3d", "checked_7d", "price_1d", "price_3d", "price_7d"
             ])
         today = datetime.now().strftime("%Y-%m-%d")
@@ -260,6 +268,7 @@ def log_signals_to_csv(signals, nifty_change):
                 today, s["ticker"], s["volume_ratio"], s["sentiment_label"], s["sentiment_score"],
                 s["headline_count"], s["sample_headline"] or "", s["price_at_signal"], s["stock_change_pct"],
                 nifty_change, s["relative_strength"], s["signal_type"], s["confidence"], s["deal_explanation"] or "",
+                s["stop_loss_pct"] or "", s["liquidity_risk"] or "",
                 "", "", "", "", "", ""
             ])
     print(f"Logged {len(signals)} signals to {SIGNALS_LOG_PATH}")
@@ -269,6 +278,5 @@ if __name__ == "__main__":
     signals = run_full_pipeline()
     print("\n=== FINAL SUMMARY ===")
     for s in signals:
-        deal_note = " [DEAL EXPLAINED]" if s["deal_explanation"] else ""
-        print(f"{s['ticker']}: vol={s['volume_ratio']}x change={s['stock_change_pct']}% "
-              f"type={s['signal_type']} confidence={s['confidence']}{deal_note}")
+        print(f"{s['ticker']}: vol={s['volume_ratio']}x type={s['signal_type']} confidence={s['confidence']} "
+              f"stop_loss={s['stop_loss_pct']}% liquidity={s['liquidity_risk']}")
