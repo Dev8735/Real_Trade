@@ -1,0 +1,2 @@
+ticker,entry_date,entry_price,stop_loss_pct,stop_loss_price,target_pct,target_price,max_hold_days,highest_price_since_entry,status
+KROSS,2026-07-20,214.68,5.28,203.34,7.92,231.68,5,214.68,OPEN
