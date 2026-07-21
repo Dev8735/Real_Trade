@@ -1,0 +1,31 @@
+﻿name: Daily NSE Signal Pipeline
+
+on:
+  schedule:
+    # 8:30 AM IST = 3:00 AM UTC (IST is UTC+5:30)
+    - cron: "0 3 * * 1-5"
+  workflow_dispatch:  # allows manual trigger from GitHub UI for testing
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install python-dotenv requests pandas yfinance
+
+      - name: Run full pipeline
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          NEWSAPI_KEY: ${{ secrets.NEWSAPI_KEY }}
+        run: |
+          python backend/full_pipeline.py
