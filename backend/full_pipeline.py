@@ -2,15 +2,13 @@
 Full Pipeline
 -------------
 Stage 1: Scan all NSE stocks for unusual volume
-Stage 2: Cross-check against block/bulk deals (explain known spikes)
+Stage 2: Cross-check against block/bulk deals
 Stage 3: Compare against Nifty (filter out market-wide noise)
 Stage 4: Run news + sentiment on top movers
 Stage 5: Score confirmed/unconfirmed signal + confidence
 Stage 6: Add risk context (stop-loss, liquidity) to HIGH signals
 Stage 7: Send HIGH signals to Telegram
 Stage 8: Log everything for accuracy tracking
-
-Decision-support tool only, not financial advice.
 """
 
 from volume_screener import scan_all_stocks
@@ -20,7 +18,7 @@ from market_context import get_nifty_change, get_daily_change_pct, classify_rela
 from risk_manager import get_volatility_stop_loss, check_liquidity_risk
 from dotenv import load_dotenv
 from pathlib import Path
-import os, requests, json, urllib.request, urllib.parse, urllib.error, time, csv
+import os, requests, json, urllib.request, urllib.parse, time, csv, sys
 import pandas as pd
 import yfinance as yf
 from datetime import datetime
@@ -32,6 +30,16 @@ load_dotenv(dotenv_path=env_path)
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
+
+print(f"[DEBUG] BOT_TOKEN is set: {bool(BOT_TOKEN)} (length: {len(BOT_TOKEN) if BOT_TOKEN else 0})")
+print(f"[DEBUG] CHAT_ID is set: {bool(CHAT_ID)} value: {CHAT_ID}")
+print(f"[DEBUG] NEWSAPI_KEY is set: {bool(NEWSAPI_KEY)}")
+
+required = ["BOT_TOKEN", "CHAT_ID", "NEWSAPI_KEY"]
+missing = [k for k in required if not os.getenv(k)]
+if missing:
+    print(f"[ERROR] Missing env vars: {', '.join(missing)}")
+    sys.exit(1)
 
 TOP_N = 30
 NEWSAPI_DAILY_LIMIT_BUFFER = 30
@@ -60,12 +68,12 @@ def send_telegram_message(text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage?{params}"
     try:
         res = urllib.request.urlopen(url)
-        return json.loads(res.read())
-    except urllib.error.HTTPError as e:
-        print(f"Telegram alert failed ({e.code}): {e.reason}")
-    except urllib.error.URLError as e:
-        print(f"Telegram alert failed: {e.reason}")
-    return None
+        result = json.loads(res.read())
+        print(f"[DEBUG] Telegram response: {result}")
+        return result
+    except Exception as e:
+        print(f"[ERROR] Telegram send failed: {e}")
+        return None
 
 
 def fetch_relevant_news(ticker_symbol, page_size=10):
@@ -211,10 +219,8 @@ def run_full_pipeline():
     if confirmed_high or unconfirmed_high:
         message = format_message(confirmed_high, unconfirmed_high, nifty_change)
         send_telegram_message(message)
-        print("Alert sent.")
     else:
         send_telegram_message(f"No high-confidence signals today (Nifty: {nifty_change}%). Quiet day.")
-        print("No HIGH signals - quiet-day message sent.")
 
     print("\n=== STAGE 6: Logging ALL signals for tracking ===")
     log_signals_to_csv(final_signals, nifty_change)
@@ -250,7 +256,7 @@ def format_message(confirmed_high, unconfirmed_high, nifty_change):
                 lines.append(f"     Suggested stop-loss: {s['stop_loss_pct']}% | Liquidity: {s['liquidity_risk']}")
         lines.append("")
 
-    lines.append(" Decision-support only, not financial advice. Stop-loss % is a volatility-based reference, not a guarantee. Always verify independently.")
+    lines.append(" Decision-support only, not financial advice. Always verify independently.")
     return "\n".join(lines)
 
 
