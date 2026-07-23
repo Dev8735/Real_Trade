@@ -20,7 +20,7 @@ from market_context import get_nifty_change, get_daily_change_pct, classify_rela
 from risk_manager import get_volatility_stop_loss, check_liquidity_risk
 from dotenv import load_dotenv
 from pathlib import Path
-import os, requests, json, urllib.request, urllib.parse, time, csv
+import os, requests, json, urllib.request, urllib.parse, urllib.error, time, csv
 import pandas as pd
 import yfinance as yf
 from datetime import datetime
@@ -58,8 +58,14 @@ COMPANY_NAMES = load_company_names()
 def send_telegram_message(text):
     params = urllib.parse.urlencode({"chat_id": CHAT_ID, "text": text})
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage?{params}"
-    res = urllib.request.urlopen(url)
-    return json.loads(res.read())
+    try:
+        res = urllib.request.urlopen(url)
+        return json.loads(res.read())
+    except urllib.error.HTTPError as e:
+        print(f"Telegram alert failed ({e.code}): {e.reason}")
+    except urllib.error.URLError as e:
+        print(f"Telegram alert failed: {e.reason}")
+    return None
 
 
 def fetch_relevant_news(ticker_symbol, page_size=10):
