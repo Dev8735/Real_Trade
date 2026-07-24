@@ -1,0 +1,40 @@
+﻿name: Daily Exit Evaluator
+
+on:
+  schedule:
+    # 3:45 PM IST = 10:15 UTC
+    - cron: "15 10 * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  run-exit-evaluator:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install pandas yfinance python-dotenv
+
+      - name: Run exit evaluator
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: |
+          python backend/exit_evaluator.py
+
+      - name: Commit updated positions
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/positions.csv
+          git diff --staged --quiet || git commit -m "chore: update positions tracking [automated]"
+          git push
