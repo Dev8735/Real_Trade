@@ -6,6 +6,9 @@
   <component name="ChangeListManager">
     <list default="true" id="9ca43e7b-94dc-48e2-9dd2-bf9651a63009" name="Changes" comment="">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/full_pipeline.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/full_pipeline.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/data/nse_tickers.csv" beforeDir="false" afterPath="$PROJECT_DIR$/data/nse_tickers.csv" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/data/signals_log.csv" beforeDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -34,24 +37,24 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "Python tests.Python tests in api.py.executor": "Run",
-    "Python tests.Python tests in convert_nse_disclosures.py.executor": "Run",
-    "Python tests.Python tests in enhanced_model.py.executor": "Run",
-    "Python tests.Python tests in features.py.executor": "Run",
-    "Python tests.Python tests in ingest.py.executor": "Run",
-    "Python tests.Python tests in same_day_signal.py.executor": "Run",
-    "Python.backtest.executor": "Run",
-    "Python.daily_scheduler.executor": "Run",
-    "Python.quality_signals.executor": "Run",
-    "Python.train_test_predict.executor": "Run",
-    "RunOnceActivity.OpenProjectViewOnStart": "true",
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "git-widget-placeholder": "dev",
-    "last_opened_file_path": "C:/Users/HP/PycharmProjects/Real trade"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;Python tests.Python tests in api.py.executor&quot;: &quot;Run&quot;,
+    &quot;Python tests.Python tests in convert_nse_disclosures.py.executor&quot;: &quot;Run&quot;,
+    &quot;Python tests.Python tests in enhanced_model.py.executor&quot;: &quot;Run&quot;,
+    &quot;Python tests.Python tests in features.py.executor&quot;: &quot;Run&quot;,
+    &quot;Python tests.Python tests in ingest.py.executor&quot;: &quot;Run&quot;,
+    &quot;Python tests.Python tests in same_day_signal.py.executor&quot;: &quot;Run&quot;,
+    &quot;Python.backtest.executor&quot;: &quot;Run&quot;,
+    &quot;Python.daily_scheduler.executor&quot;: &quot;Run&quot;,
+    &quot;Python.quality_signals.executor&quot;: &quot;Run&quot;,
+    &quot;Python.train_test_predict.executor&quot;: &quot;Run&quot;,
+    &quot;RunOnceActivity.OpenProjectViewOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;dev&quot;,
+    &quot;last_opened_file_path&quot;: &quot;C:/Users/HP/PycharmProjects/Real trade&quot;
   }
-}]]></component>
+}</component>
   <component name="SharedIndexes">
     <attachedChunks>
       <set>
