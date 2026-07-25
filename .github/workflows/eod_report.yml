@@ -1,0 +1,29 @@
+﻿name: Daily EOD Report
+
+on:
+  schedule:
+    - cron: "15 10 * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  run-eod-report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install python-dotenv requests pandas yfinance
+
+      - name: Run EOD report
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: |
+          python backend/eod_report.py
