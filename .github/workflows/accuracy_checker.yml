@@ -1,4 +1,4 @@
-name: Daily Accuracy Checker
+﻿name: Daily Accuracy Checker
 
 on:
   schedule:
@@ -23,24 +23,15 @@ jobs:
         run: |
           pip install pandas yfinance
 
-      - name: Ensure signals log exists
-        run: |
-          mkdir -p data
-          [ -f data/signals_log.csv ] || echo "signal_date,ticker,volume_ratio,sentiment_label,sentiment_score,headline_count,sample_headline,price_at_signal,stock_change_pct,nifty_change_pct,relative_strength,signal_type,confidence,direction,direction_reason,composite_score,deal_explanation,stop_loss_pct,stop_loss_price,target_price,liquidity_risk,checked_1d,checked_3d,checked_7d,price_1d,price_3d,price_7d" > data/signals_log.csv
-
       - name: Run accuracy checker
         run: |
           python backend/accuracy_checker.py
 
-      - name: Commit updated signals log
+      - name: Commit updated accuracy artifacts
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          if [ -f data/signals_log.csv ]; then
-            git add data/signals_log.csv
-            git diff --staged --quiet || git commit -m "chore: update accuracy tracking data [automated]"
-            git push
-          else
-            echo "data/signals_log.csv not found; skipping commit."
-          fi
-
+          mkdir -p data
+          git add data/
+          git diff --staged --quiet || git commit -m "chore: update accuracy tracking data [automated]"
+          git push
