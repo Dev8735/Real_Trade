@@ -27,18 +27,33 @@ CHAT_ID = os.getenv("CHAT_ID")
 SIGNALS_LOG_PATH = PROJECT_ROOT / "data" / "signals_log.csv"
 
 MISSED_MOVER_TOP_N = 10
-MOMENTUM_STILL_BUILDING_RATIO = 5.0  # if today's volume ratio is still this high, momentum may be continuing
+MOMENTUM_STILL_BUILDING_RATIO = 5.0
 
 
-def send_telegram_message(text):
+def _send_single_message(text):
     params = urllib.parse.urlencode({"chat_id": CHAT_ID, "text": text})
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage?{params}"
     try:
         res = urllib.request.urlopen(url)
         return json.loads(res.read())
     except Exception as e:
+        try:
+            error_body = e.read().decode() if hasattr(e, "read") else str(e)
+        except Exception:
+            error_body = str(e)
         print(f"[ERROR] Telegram send failed: {e}")
+        print(f"[ERROR] Telegram response body: {error_body}")
         return None
+
+
+def send_telegram_message(text):
+    if len(text) > 3800:
+        chunks = [text[i:i + 3800] for i in range(0, len(text), 3800)]
+        results = []
+        for chunk in chunks:
+            results.append(_send_single_message(chunk))
+        return results
+    return _send_single_message(text)
 
 
 def get_current_price(ticker):
@@ -53,7 +68,6 @@ def get_current_price(ticker):
 
 
 def check_todays_signal_performance():
-    """Look up today's logged signals and check how they've performed intraday."""
     if not SIGNALS_LOG_PATH.exists():
         return []
 
@@ -82,7 +96,6 @@ def check_todays_signal_performance():
 
 
 def find_missed_movers(already_signaled_tickers, nifty_change):
-    """Find today's other notable movers that weren't in the morning signal list."""
     top_movers = scan_all_stocks(limit=None, top_n=50, debug=False)
 
     missed = []
@@ -121,33 +134,33 @@ def find_missed_movers(already_signaled_tickers, nifty_change):
 
 
 def format_report(performance_results, missed_movers, nifty_change):
-    lines = [f" End-of-Day Report (Nifty: {nifty_change}%)\n"]
+    lines = [f"EOD Report (Nifty: {nifty_change}%)\n"]
 
     if performance_results:
-        lines.append(" Today's Signal Performance:")
+        lines.append("Today's Signal Performance:")
         for r in performance_results:
-            emoji = "" if r["change_pct"] > 0 else "" if r["change_pct"] < 0 else ""
+            emoji = "UP" if r["change_pct"] > 0 else "DOWN" if r["change_pct"] < 0 else "FLAT"
             lines.append(
-                f"{emoji} {r['ticker']} ({r['direction']}): entry ₹{r['entry_price']}  "
-                f"now ₹{r['current_price']} ({r['change_pct']:+.2f}%) | score {r['composite_score']}"
+                f"[{emoji}] {r['ticker']} ({r['direction']}): entry {r['entry_price']} -> "
+                f"now {r['current_price']} ({r['change_pct']:+.2f}%) | score {r['composite_score']}"
             )
         lines.append("")
     else:
-        lines.append(" No signals were logged this morning to check.\n")
+        lines.append("No signals were logged this morning to check.\n")
 
     if missed_movers:
-        lines.append(" Other Notable Movers Today (not in morning signal):")
+        lines.append("Other Notable Movers Today (not in morning signal):")
         for m in missed_movers:
             lines.append(
-                f"   {m['ticker']}: {m['direction']}, {m['change_pct']}% "
+                f"  - {m['ticker']}: {m['direction']}, {m['change_pct']}% "
                 f"({m['relative_strength']}), {m['volume_ratio']}x volume"
             )
-            lines.append(f"    Status as of today's close: {m['momentum_status']}")
+            lines.append(f"    Status as of close: {m['momentum_status']}")
         lines.append("")
 
     lines.append(
-        "ℹ \"Momentum status\" describes today's close only - it is NOT a prediction "
-        "of tomorrow's move. No one can reliably predict that. Verify independently before acting."
+        "Note: 'Momentum status' describes today's close only - NOT a prediction "
+        "of tomorrow. Verify independently before acting."
     )
     return "\n".join(lines)
 
@@ -169,8 +182,12 @@ def run_eod_report():
 
     print("\n=== Sending report ===")
     report = format_report(performance_results, missed_movers, nifty_change)
-    send_telegram_message(report)
-    print("Report sent.")
+    print(f"[DEBUG] Report length: {len(report)} characters")
+    result = send_telegram_message(report)
+    if result:
+        print("Report sent successfully.")
+    else:
+        print("Report send FAILED - see error above.")
 
 
 if __name__ == "__main__":
