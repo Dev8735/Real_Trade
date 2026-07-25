@@ -2,7 +2,6 @@
 
 on:
   schedule:
-    # 6:00 PM IST = 12:30 UTC
     - cron: "30 12 * * 1-5"
   workflow_dispatch:
 
@@ -32,6 +31,10 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/signals_log.csv
-          git diff --staged --quiet || git commit -m "chore: update accuracy tracking data [automated]"
-          git push
+          if [ -f data/signals_log.csv ]; then
+            git add data/signals_log.csv
+            git diff --staged --quiet || git commit -m "chore: update accuracy tracking data [automated]"
+            git push
+          else
+            echo "data/signals_log.csv not found; skipping commit."
+          fi
