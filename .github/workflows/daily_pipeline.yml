@@ -1,4 +1,4 @@
-﻿name: Daily NSE Signal Pipeline
+name: Daily NSE Signal Pipeline
 
 on:
   schedule:
@@ -27,5 +27,7 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
           NEWSAPI_KEY: ${{ secrets.NEWSAPI_KEY }}
+          RUN_LABEL: "Pre-Market 8:30 AM"
         run: |
           python backend/full_pipeline.py
+

@@ -1,4 +1,4 @@
-﻿name: Mid-Morning Signal Check
+name: Mid-Morning Signal Check
 
 on:
   schedule:
@@ -29,6 +29,7 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
           NEWSAPI_KEY: ${{ secrets.NEWSAPI_KEY }}
+          RUN_LABEL: "Mid-Morning 9:45 AM"
         run: |
           python backend/full_pipeline.py
 
@@ -40,3 +41,4 @@ jobs:
           git add data/
           git diff --staged --quiet || git commit -m "chore: update signals log [mid-morning run]"
           git push
+
