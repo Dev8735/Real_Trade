@@ -1,12 +1,12 @@
 ﻿"""
 End-of-Day Report
 -------------------
-Runs ~3:45 PM daily. Covers three things:
-1. Performance check: how did today's morning signals actually do?
-2. Missed movers: other stocks with big volume/price action today that
-   weren't in the morning signal list (both up and down moves).
-3. Status read (not a prediction): is each notable stock's momentum
-   still building or fading as of today's close?
+Runs ~3:45 PM daily. Covers three clearly separated sections:
+1. Morning Signal Performance: how did today's morning signals actually do?
+2. Top Gainers Today: biggest up-moves today, with evidence, whether or not
+   they were in the morning signal.
+3. Top Losers Today: biggest down-moves today, with evidence, whether or not
+   they were in the morning signal.
 """
 
 from volume_screener import scan_all_stocks
@@ -26,7 +26,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 SIGNALS_LOG_PATH = PROJECT_ROOT / "data" / "signals_log.csv"
 
-MISSED_MOVER_TOP_N = 10
+TOP_GAINERS_LOSERS_N = 8
 MOMENTUM_STILL_BUILDING_RATIO = 5.0
 
 
@@ -69,14 +69,19 @@ def get_current_price(ticker):
 
 def check_todays_signal_performance():
     if not SIGNALS_LOG_PATH.exists():
-        return []
+        return [], set()
 
     df = pd.read_csv(SIGNALS_LOG_PATH)
     today = datetime.now().strftime("%Y-%m-%d")
     todays_signals = df[df["signal_date"] == today]
 
     results = []
+    seen_tickers = set()
     for _, row in todays_signals.iterrows():
+        if row["ticker"] in seen_tickers:
+            continue
+        seen_tickers.add(row["ticker"])
+
         current_price = get_current_price(row["ticker"])
         if current_price is None or pd.isna(row["price_at_signal"]) or row["price_at_signal"] == 0:
             continue
@@ -92,96 +97,104 @@ def check_todays_signal_performance():
             "composite_score": row.get("composite_score", "N/A")
         })
 
-    return results
+    return results, seen_tickers
 
 
-def find_missed_movers(already_signaled_tickers, nifty_change):
-    top_movers = scan_all_stocks(limit=None, top_n=50, debug=False)
+def get_todays_gainers_and_losers(nifty_change, already_signaled_tickers):
+    top_movers = scan_all_stocks(limit=None, top_n=60, debug=False)
 
-    missed = []
+    enriched = []
     for stock in top_movers:
         ticker_clean = stock["ticker"].replace(".NS", "")
-        if ticker_clean in already_signaled_tickers:
-            continue
-
         stock_change = get_daily_change_pct(f"{ticker_clean}.NS")
-        relative_strength = classify_relative_strength(stock_change, nifty_change)
-
-        if relative_strength not in ("outperforming market", "underperforming market"):
+        if stock_change is None:
             continue
 
-        direction = "Notable UP move" if (stock_change or 0) > 0 else "Notable DOWN move"
-
+        relative_strength = classify_relative_strength(stock_change, nifty_change)
         momentum_status = (
-            "volume still elevated - momentum may be continuing"
+            "volume still elevated - move may be continuing"
             if stock["ratio"] >= MOMENTUM_STILL_BUILDING_RATIO
             else "volume moderating - move may be settling"
         )
 
-        missed.append({
+        enriched.append({
             "ticker": ticker_clean,
-            "direction": direction,
             "volume_ratio": stock["ratio"],
             "change_pct": stock_change,
             "relative_strength": relative_strength,
-            "momentum_status": momentum_status
+            "momentum_status": momentum_status,
+            "already_signaled": ticker_clean in already_signaled_tickers
         })
 
-        if len(missed) >= MISSED_MOVER_TOP_N:
-            break
+    gainers = sorted([s for s in enriched if s["change_pct"] > 0], key=lambda x: x["change_pct"], reverse=True)
+    losers = sorted([s for s in enriched if s["change_pct"] < 0], key=lambda x: x["change_pct"])
 
-    return missed
+    return gainers[:TOP_GAINERS_LOSERS_N], losers[:TOP_GAINERS_LOSERS_N]
 
 
-def format_report(performance_results, missed_movers, nifty_change):
+def format_report(performance_results, gainers, losers, nifty_change):
     lines = [f"EOD Report (Nifty: {nifty_change}%)\n"]
 
+    lines.append("=== 1. Morning Signal Performance ===")
     if performance_results:
-        lines.append("Today's Signal Performance:")
         for r in performance_results:
-            emoji = "UP" if r["change_pct"] > 0 else "DOWN" if r["change_pct"] < 0 else "FLAT"
+            tag = "UP" if r["change_pct"] > 0 else "DOWN" if r["change_pct"] < 0 else "FLAT"
             lines.append(
-                f"[{emoji}] {r['ticker']} ({r['direction']}): entry {r['entry_price']} -> "
+                f"[{tag}] {r['ticker']} ({r['direction']}): entry {r['entry_price']} -> "
                 f"now {r['current_price']} ({r['change_pct']:+.2f}%) | score {r['composite_score']}"
             )
-        lines.append("")
     else:
-        lines.append("No signals were logged this morning to check.\n")
+        lines.append("No signals were logged this morning.")
+    lines.append("")
 
-    if missed_movers:
-        lines.append("Other Notable Movers Today (not in morning signal):")
-        for m in missed_movers:
+    lines.append("=== 2. Top Gainers Today ===")
+    if gainers:
+        for g in gainers:
+            flag = " [already in morning signal]" if g["already_signaled"] else ""
             lines.append(
-                f"  - {m['ticker']}: {m['direction']}, {m['change_pct']}% "
-                f"({m['relative_strength']}), {m['volume_ratio']}x volume"
+                f"  {g['ticker']}: +{g['change_pct']}% | {g['volume_ratio']}x volume | "
+                f"{g['relative_strength']}{flag}"
             )
-            lines.append(f"    Status as of close: {m['momentum_status']}")
-        lines.append("")
+            lines.append(f"    Status: {g['momentum_status']}")
+    else:
+        lines.append("No notable gainers found.")
+    lines.append("")
+
+    lines.append("=== 3. Top Losers Today ===")
+    if losers:
+        for l in losers:
+            flag = " [already in morning signal]" if l["already_signaled"] else ""
+            lines.append(
+                f"  {l['ticker']}: {l['change_pct']}% | {l['volume_ratio']}x volume | "
+                f"{l['relative_strength']}{flag}"
+            )
+            lines.append(f"    Status: {l['momentum_status']}")
+    else:
+        lines.append("No notable losers found.")
+    lines.append("")
 
     lines.append(
-        "Note: 'Momentum status' describes today's close only - NOT a prediction "
-        "of tomorrow. Verify independently before acting."
+        "Note: 'Status' describes today's close only - NOT a prediction of tomorrow. "
+        "Decision-support only, not financial advice. Verify independently before acting."
     )
     return "\n".join(lines)
 
 
 def run_eod_report():
     print("=== Checking today's signal performance ===")
-    performance_results = check_todays_signal_performance()
+    performance_results, already_signaled = check_todays_signal_performance()
     print(f"Found {len(performance_results)} signal(s) from today to check.")
 
     print("\n=== Fetching Nifty for context ===")
     nifty_change = get_nifty_change()
     print(f"Nifty 50 today: {nifty_change}%")
 
-    already_signaled = [r["ticker"] for r in performance_results]
-
-    print("\n=== Scanning for missed movers ===")
-    missed_movers = find_missed_movers(already_signaled, nifty_change)
-    print(f"Found {len(missed_movers)} notable unsignaled mover(s).")
+    print("\n=== Scanning for today's gainers and losers ===")
+    gainers, losers = get_todays_gainers_and_losers(nifty_change, already_signaled)
+    print(f"Found {len(gainers)} gainer(s), {len(losers)} loser(s).")
 
     print("\n=== Sending report ===")
-    report = format_report(performance_results, missed_movers, nifty_change)
+    report = format_report(performance_results, gainers, losers, nifty_change)
     print(f"[DEBUG] Report length: {len(report)} characters")
     result = send_telegram_message(report)
     if result:
