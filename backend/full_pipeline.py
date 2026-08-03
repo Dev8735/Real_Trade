@@ -6,7 +6,7 @@ Stage 2: Cross-check against block/bulk deals
 Stage 3: Compare against Nifty (filter out market-wide noise)
 Stage 4: Run news + sentiment on top movers
 Stage 5: Score confirmed/unconfirmed signal + confidence + composite score + BUY/SELL direction
-Stage 6: Add risk context (stop-loss, target) to HIGH signals
+Stage 6: Add risk context (stop-loss, target, RSI, day-range) to HIGH signals
 Stage 7: Send HIGH signals to Telegram with full evidence
 Stage 8: Log everything for accuracy tracking
 """
@@ -15,7 +15,7 @@ from volume_screener import scan_all_stocks
 from sentiment_analyzer import analyze_sentiment
 from block_deal_checker import get_todays_deal_symbols, check_stock_for_deals
 from market_context import get_nifty_change, get_daily_change_pct, classify_relative_strength
-from risk_manager import get_volatility_stop_loss, check_liquidity_risk
+from risk_manager import get_volatility_stop_loss, check_liquidity_risk, calculate_rsi, get_day_range_position
 from dotenv import load_dotenv
 from pathlib import Path
 import os, requests, json, urllib.request, urllib.parse, time, csv, sys
@@ -30,6 +30,7 @@ load_dotenv(dotenv_path=env_path)
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
+RUN_LABEL = os.getenv("RUN_LABEL", "Signal Check")
 
 print(f"[DEBUG] BOT_TOKEN is set: {bool(BOT_TOKEN)} (length: {len(BOT_TOKEN) if BOT_TOKEN else 0})")
 print(f"[DEBUG] CHAT_ID is set: {bool(CHAT_ID)} value: {CHAT_ID}")
@@ -65,7 +66,7 @@ def load_company_names():
 COMPANY_NAMES = load_company_names()
 
 
-def send_telegram_message(text):
+def _send_single_message(text):
     params = urllib.parse.urlencode({"chat_id": CHAT_ID, "text": text})
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage?{params}"
     try:
@@ -74,8 +75,23 @@ def send_telegram_message(text):
         print(f"[DEBUG] Telegram response: {result}")
         return result
     except Exception as e:
+        try:
+            error_body = e.read().decode() if hasattr(e, "read") else str(e)
+        except Exception:
+            error_body = str(e)
         print(f"[ERROR] Telegram send failed: {e}")
+        print(f"[ERROR] Telegram response body: {error_body}")
         return None
+
+
+def send_telegram_message(text):
+    if len(text) > 3800:
+        chunks = [text[i:i + 3800] for i in range(0, len(text), 3800)]
+        results = []
+        for chunk in chunks:
+            results.append(_send_single_message(chunk))
+        return results
+    return _send_single_message(text)
 
 
 def fetch_relevant_news(ticker_symbol, page_size=10):
@@ -154,15 +170,6 @@ def score_signal(volume_ratio, relevant_article_count, sentiment_score, has_deal
 
 
 def determine_direction(stock_change_pct, relative_strength, sentiment_label, sentiment_score, signal_type):
-    """
-    Decide BUY vs SELL/AVOID based on price direction + market divergence + sentiment.
-
-    BUY: stock outperforming market AND price is up (real relative strength)
-    SELL/AVOID: stock underperforming market AND price is down (real relative weakness)
-
-    Sentiment (when available, i.e. CONFIRMED signals) must agree with price direction,
-    otherwise the signal is downgraded to WATCH (mixed evidence, not a clean directional call).
-    """
     if stock_change_pct is None:
         return "WATCH", "Insufficient price data"
 
@@ -181,7 +188,6 @@ def determine_direction(stock_change_pct, relative_strength, sentiment_label, se
         else:
             return "WATCH", "Evidence is mixed (price, market divergence, and sentiment don't all agree)"
     else:
-        # UNCONFIRMED - no news to cross-check, rely on price + volume + divergence only
         if price_up and outperforming:
             return "BUY (unconfirmed)", "Price rising with high volume, outperforming Nifty - but no news backing this move"
         elif not price_up and underperforming:
@@ -246,10 +252,16 @@ def run_full_pipeline():
             stock["ratio"], len(headlines), sentiment["score"], relative_strength, signal_type
         )
 
-        risk_info = {"stop_loss_pct": None, "liquidity_risk": None, "stop_loss_price": None, "target_price": None}
+        risk_info = {
+            "stop_loss_pct": None, "liquidity_risk": None, "stop_loss_price": None,
+            "target_price": None, "rsi": None, "rsi_status": None, "day_range_note": None
+        }
         if confidence == "HIGH" and price:
             vol_data = get_volatility_stop_loss(ticker_clean)
             liq_data = check_liquidity_risk(ticker_clean)
+            rsi_data = calculate_rsi(ticker_clean)
+            range_data = get_day_range_position(ticker_clean)
+
             if vol_data:
                 sl_pct = vol_data["suggested_stop_loss_pct"]
                 risk_info["stop_loss_pct"] = sl_pct
@@ -257,6 +269,11 @@ def run_full_pipeline():
                 risk_info["target_price"] = round(price * (1 + (sl_pct * TARGET_RATIO) / 100), 2)
             if liq_data:
                 risk_info["liquidity_risk"] = liq_data["liquidity_risk"]
+            if rsi_data:
+                risk_info["rsi"] = rsi_data["rsi"]
+                risk_info["rsi_status"] = rsi_data["status"]
+            if range_data:
+                risk_info["day_range_note"] = range_data["note"]
 
         final_signals.append({
             "ticker": ticker_clean,
@@ -277,7 +294,10 @@ def run_full_pipeline():
             "stop_loss_pct": risk_info["stop_loss_pct"],
             "stop_loss_price": risk_info["stop_loss_price"],
             "target_price": risk_info["target_price"],
-            "liquidity_risk": risk_info["liquidity_risk"]
+            "liquidity_risk": risk_info["liquidity_risk"],
+            "rsi": risk_info["rsi"],
+            "rsi_status": risk_info["rsi_status"],
+            "day_range_note": risk_info["day_range_note"]
         })
 
         time.sleep(0.3)
@@ -291,7 +311,7 @@ def run_full_pipeline():
         message = format_message(confirmed_high, unconfirmed_high, nifty_change)
         send_telegram_message(message)
     else:
-        send_telegram_message(f"No high-confidence signals today (Nifty: {nifty_change}%). Quiet day.")
+        send_telegram_message(f"[{RUN_LABEL}] No high-confidence signals (Nifty: {nifty_change}%). Quiet check.")
 
     print("\n=== STAGE 6: Logging ALL signals for tracking ===")
     log_signals_to_csv(final_signals, nifty_change)
@@ -301,49 +321,53 @@ def run_full_pipeline():
 
 def format_signal_block(s):
     lines = []
-    dir_emoji = "" if "BUY" in s["direction"] else "" if "SELL" in s["direction"] else ""
+    dir_emoji = "[BUY]" if "BUY" in s["direction"] else "[SELL]" if "SELL" in s["direction"] else "[WATCH]"
 
     lines.append(f"{dir_emoji} {s['direction']}: {s['ticker']}  |  Score: {s['composite_score']}/100")
     lines.append(f"Reason: {s['direction_reason']}")
-    lines.append(f"Entry: ₹{s['price_at_signal']}")
+    lines.append(f"Entry: Rs.{s['price_at_signal']}")
 
     if s["stop_loss_price"]:
-        lines.append(f"Stop-loss: ₹{s['stop_loss_price']} (-{s['stop_loss_pct']}%)")
+        lines.append(f"Stop-loss: Rs.{s['stop_loss_price']} (-{s['stop_loss_pct']}%)")
     if s["target_price"]:
         target_pct = round(s["stop_loss_pct"] * TARGET_RATIO, 2)
-        lines.append(f"Target: ₹{s['target_price']} (+{target_pct}%)")
+        lines.append(f"Target: Rs.{s['target_price']} (+{target_pct}%)")
     if s["liquidity_risk"]:
         lines.append(f"Liquidity: {s['liquidity_risk']}")
+    if s["rsi"]:
+        lines.append(f"RSI: {s['rsi']} ({s['rsi_status']})")
+    if s["day_range_note"]:
+        lines.append(f"Day range: {s['day_range_note']}")
 
     lines.append("Evidence:")
-    lines.append(f"   Volume: {s['volume_ratio']}x normal average")
-    lines.append(f"   Price move: {s['stock_change_pct']}% ({s['relative_strength']})")
+    lines.append(f"  - Volume: {s['volume_ratio']}x normal average")
+    lines.append(f"  - Price move: {s['stock_change_pct']}% ({s['relative_strength']})")
     if s["signal_type"] == "CONFIRMED":
-        lines.append(f"   News: {s['headline_count']} relevant article(s), sentiment {s['sentiment_label']}")
+        lines.append(f"  - News: {s['headline_count']} relevant article(s), sentiment {s['sentiment_label']}")
         if s["sample_headline"]:
-            lines.append(f"   \"{s['sample_headline']}\"")
+            lines.append(f"  - \"{s['sample_headline']}\"")
     else:
-        lines.append(f"   News: none found (unconfirmed - higher risk)")
+        lines.append(f"  - News: none found (unconfirmed - higher risk)")
 
     return "\n".join(lines)
 
 
 def format_message(confirmed_high, unconfirmed_high, nifty_change):
-    lines = [f" Signal Summary (Nifty: {nifty_change}%)\n"]
+    lines = [f"[{RUN_LABEL}] Signal Summary (Nifty: {nifty_change}%)\n"]
 
     if confirmed_high:
-        lines.append(" CONFIRMED SIGNALS\n")
+        lines.append("CONFIRMED SIGNALS\n")
         for s in confirmed_high:
             lines.append(format_signal_block(s))
             lines.append("")
 
     if unconfirmed_high:
-        lines.append(" UNCONFIRMED SIGNALS (no news backing)\n")
+        lines.append("UNCONFIRMED SIGNALS (no news backing)\n")
         for s in unconfirmed_high:
             lines.append(format_signal_block(s))
             lines.append("")
 
-    lines.append(" Decision-support only, not financial advice. SELL/AVOID means exit if held, or avoid buying if not - cash market usually can't short. Score is not a validated accuracy metric. Verify independently.")
+    lines.append("Decision-support only, not financial advice. SELL/AVOID means exit if held, or avoid buying if not - cash market usually can't short. Score is not a validated accuracy metric. Verify independently.")
     return "\n".join(lines)
 
 
@@ -359,7 +383,7 @@ def log_signals_to_csv(signals, nifty_change):
                 "headline_count", "sample_headline", "price_at_signal", "stock_change_pct",
                 "nifty_change_pct", "relative_strength", "signal_type", "confidence", "direction",
                 "direction_reason", "composite_score", "deal_explanation", "stop_loss_pct",
-                "stop_loss_price", "target_price", "liquidity_risk",
+                "stop_loss_price", "target_price", "liquidity_risk", "rsi", "rsi_status", "day_range_note",
                 "checked_1d", "checked_3d", "checked_7d", "price_1d", "price_3d", "price_7d"
             ])
         today = datetime.now().strftime("%Y-%m-%d")
@@ -370,7 +394,8 @@ def log_signals_to_csv(signals, nifty_change):
                 nifty_change, s["relative_strength"], s["signal_type"], s["confidence"], s["direction"],
                 s["direction_reason"], s["composite_score"], s["deal_explanation"] or "",
                 s["stop_loss_pct"] or "", s["stop_loss_price"] or "", s["target_price"] or "",
-                s["liquidity_risk"] or "", "", "", "", "", "", ""
+                s["liquidity_risk"] or "", s["rsi"] or "", s["rsi_status"] or "", s["day_range_note"] or "",
+                "", "", "", "", "", ""
             ])
     print(f"Logged {len(signals)} signals to {SIGNALS_LOG_PATH}")
 

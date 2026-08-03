@@ -1,4 +1,4 @@
-﻿"""
+"""
 Risk Manager
 ------------
 Adds risk-management context to signals: volatility-based stop-loss
@@ -116,6 +116,88 @@ def calculate_position_size(capital, risk_per_trade_pct, entry_price, stop_loss_
     }
 
 
+def calculate_rsi(ticker, period=14):
+    """
+    Calculate RSI (Relative Strength Index) - a momentum indicator.
+    RSI > 70 typically means "overbought" (may be extended, pullback risk).
+    RSI < 30 typically means "oversold" (may be extended downward).
+    """
+    try:
+        data = yf.download(f"{ticker}.NS", period=f"{period + 10}d", interval="1d", progress=False)
+        if data.empty or len(data) < period + 1:
+            return None
+
+        close = data["Close"]
+        if close.ndim > 1:
+            close = close.iloc[:, 0]
+
+        delta = close.diff()
+        gain = delta.where(delta > 0, 0).rolling(window=period).mean()
+        loss = -delta.where(delta < 0, 0).rolling(window=period).mean()
+
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
+
+        last_rsi = float(rsi.iloc[-1])
+        if pd.isna(last_rsi):
+            return None
+
+        if last_rsi >= 70:
+            status = "OVERBOUGHT - stock may be extended, pullback risk elevated"
+        elif last_rsi <= 30:
+            status = "OVERSOLD - stock may be extended downward"
+        else:
+            status = "Neutral range"
+
+        return {"rsi": round(last_rsi, 1), "status": status}
+    except Exception as e:
+        print(f"  Failed RSI calc for {ticker}: {e}")
+        return None
+
+
+def get_day_range_position(ticker):
+    """
+    Shows where the current price sits within today's trading range.
+    Near the high = potentially buying at the most expensive point of the day.
+    Near the low = potentially a relatively better entry point.
+    """
+    try:
+        data = yf.download(f"{ticker}.NS", period="1d", interval="1d", progress=False)
+        if data.empty:
+            return None
+
+        high = data["High"].iloc[-1]
+        low = data["Low"].iloc[-1]
+        close = data["Close"].iloc[-1]
+
+        if hasattr(high, "iloc"):
+            high = float(high.iloc[0])
+            low = float(low.iloc[0])
+            close = float(close.iloc[0])
+        else:
+            high = float(high)
+            low = float(low)
+            close = float(close)
+
+        day_range = high - low
+        if day_range == 0:
+            position_pct = 50
+        else:
+            position_pct = round(((close - low) / day_range) * 100, 1)
+
+        if position_pct >= 85:
+            note = "Trading near today's HIGH - entering here means buying near the day's most expensive point"
+        elif position_pct <= 15:
+            note = "Trading near today's LOW - relatively better entry point within today's range"
+        else:
+            note = "Trading in the middle of today's range"
+
+        return {"position_pct": position_pct, "day_high": high, "day_low": low, "note": note}
+    except Exception as e:
+        print(f"  Failed day-range calc for {ticker}: {e}")
+        return None
+
+
 if __name__ == "__main__":
     test_ticker = "KROSS"
 
@@ -138,3 +220,4 @@ if __name__ == "__main__":
             stop_loss_pct=vol["suggested_stop_loss_pct"]
         )
         print(example)
+
