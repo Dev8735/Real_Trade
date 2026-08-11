@@ -1,13 +1,16 @@
-﻿"""
+"""
 Full Pipeline
 -------------
-Stage 1: Scan all NSE stocks for unusual volume
-Stage 2: Cross-check against block/bulk deals
+Stage 1: Scan all NSE stocks for unusual volume (ratio + z-score)
+Stage 2: Cross-check against block/bulk deals - now used as a confirmation
+         source too, not just a downgrade filter
 Stage 3: Compare against Nifty (filter out market-wide noise)
 Stage 4: Run news + sentiment on top movers
-Stage 5: Score confirmed/unconfirmed signal + confidence + composite score + BUY/SELL direction
+Stage 5: Score CONFIRMED (news) / DEAL_CONFIRMED (disclosed deals) /
+         UNCONFIRMED (volume+price only) signals with confidence + direction
 Stage 6: Add risk context (stop-loss, target, RSI, day-range) to HIGH signals
-Stage 7: Send HIGH signals to Telegram with full evidence
+Stage 7: Send TWO separate Telegram messages - one for confirmed signals,
+         one for unconfirmed
 Stage 8: Log everything for accuracy tracking
 """
 
@@ -55,7 +58,9 @@ UNCONFIRMED_HIGH_MIN_VOLUME = 8.0
 UNCONFIRMED_HIGH_MIN_MOVE_PCT = 5.0
 UNCONFIRMED_MEDIUM_MIN_VOLUME = 3.0
 
+MIN_ZSCORE_FOR_HIGH = 3.0
 TARGET_RATIO = 1.5
+MIN_SCORE_THRESHOLD = 80  # only signals scoring this or higher get sent to Telegram
 
 
 def load_company_names():
@@ -139,14 +144,45 @@ def get_current_price(ticker_symbol):
         return None
 
 
-def score_signal(volume_ratio, relevant_article_count, sentiment_score, has_deal_explanation,
-                  relative_strength, stock_change_pct):
-    if has_deal_explanation:
-        return "EXPLAINED", "LOW"
+def analyze_deal_direction(deal_explanation):
+    """
+    Parse the deal explanation string for net BUY vs SELL activity.
+    Returns 'bullish', 'bearish', or 'mixed'/'neutral'.
+    """
+    if not deal_explanation:
+        return None
 
+    buy_count = deal_explanation.upper().count("BUY")
+    sell_count = deal_explanation.upper().count("SELL")
+
+    if buy_count > sell_count:
+        return "bullish"
+    elif sell_count > buy_count:
+        return "bearish"
+    else:
+        return "mixed"
+
+
+def score_signal(volume_ratio, z_score, relevant_article_count, sentiment_score,
+                  deal_direction, relative_strength, stock_change_pct):
+    """
+    Three signal types:
+    - CONFIRMED: backed by real, relevant news
+    - DEAL_CONFIRMED: backed by real disclosed bulk/block deal activity
+      aligned with price direction
+    - UNCONFIRMED: volume + price only, no corroboration
+    """
     has_news = relevant_article_count >= 1
     diverging = relative_strength in ("outperforming market", "underperforming market")
     move_size = abs(stock_change_pct) if stock_change_pct is not None else 0
+    strong_zscore = (z_score is not None) and (z_score >= MIN_ZSCORE_FOR_HIGH)
+
+    # Check if deal activity aligns with price direction (real confirmation)
+    price_up = (stock_change_pct or 0) > 0
+    deal_aligned = (
+        (deal_direction == "bullish" and price_up) or
+        (deal_direction == "bearish" and not price_up)
+    )
 
     if has_news:
         if (volume_ratio >= CONFIRMED_HIGH_MIN_VOLUME
@@ -158,6 +194,11 @@ def score_signal(volume_ratio, relevant_article_count, sentiment_score, has_deal
             return "CONFIRMED", "MEDIUM"
         else:
             return "CONFIRMED", "LOW"
+    elif deal_aligned:
+        if diverging and (volume_ratio >= 3.0 or strong_zscore):
+            return "DEAL_CONFIRMED", "HIGH"
+        else:
+            return "DEAL_CONFIRMED", "MEDIUM"
     else:
         if (volume_ratio >= UNCONFIRMED_HIGH_MIN_VOLUME
                 and move_size >= UNCONFIRMED_HIGH_MIN_MOVE_PCT
@@ -169,7 +210,7 @@ def score_signal(volume_ratio, relevant_article_count, sentiment_score, has_deal
             return "UNCONFIRMED", "LOW"
 
 
-def determine_direction(stock_change_pct, relative_strength, sentiment_label, sentiment_score, signal_type):
+def determine_direction(stock_change_pct, relative_strength, sentiment_label, signal_type, deal_direction):
     if stock_change_pct is None:
         return "WATCH", "Insufficient price data"
 
@@ -187,28 +228,40 @@ def determine_direction(stock_change_pct, relative_strength, sentiment_label, se
             return "SELL/AVOID", "Price falling, underperforming Nifty, negative news sentiment - all evidence aligned"
         else:
             return "WATCH", "Evidence is mixed (price, market divergence, and sentiment don't all agree)"
+
+    elif signal_type == "DEAL_CONFIRMED":
+        if price_up and outperforming and deal_direction == "bullish":
+            return "BUY", f"Price rising, outperforming Nifty, and disclosed deals show net buying - real institutional activity confirms this move"
+        elif not price_up and underperforming and deal_direction == "bearish":
+            return "SELL/AVOID", f"Price falling, underperforming Nifty, and disclosed deals show net selling - real institutional activity confirms this move"
+        else:
+            return "WATCH", "Deal direction and price/market divergence don't fully agree"
+
     else:
         if price_up and outperforming:
-            return "BUY (unconfirmed)", "Price rising with high volume, outperforming Nifty - but no news backing this move"
+            return "BUY (unconfirmed)", "Price rising with high volume, outperforming Nifty - but no news or deal backing this move"
         elif not price_up and underperforming:
-            return "SELL/AVOID (unconfirmed)", "Price falling with high volume, underperforming Nifty - but no news backing this move"
+            return "SELL/AVOID (unconfirmed)", "Price falling with high volume, underperforming Nifty - but no news or deal backing this move"
         else:
             return "WATCH", "Volume is unusual but price/market direction is unclear"
 
 
-def compute_composite_score(volume_ratio, relevant_article_count, sentiment_score,
+def compute_composite_score(volume_ratio, z_score, relevant_article_count, sentiment_score,
                              relative_strength, signal_type):
     score = 0
-    score += min(volume_ratio / 20 * 35, 35)
+    score += min(volume_ratio / 20 * 25, 25)
+    if z_score is not None:
+        score += min(max(z_score, 0) / 10 * 10, 10)
     if signal_type == "CONFIRMED":
         score += min(relevant_article_count / 3 * 15, 15)
         score += min(abs(sentiment_score) / 3 * 10, 10)
-    if relative_strength in ("outperforming market", "underperforming market"):
         score += 20
-    if signal_type == "CONFIRMED":
-        score += 20
+    elif signal_type == "DEAL_CONFIRMED":
+        score += 25
     elif signal_type == "UNCONFIRMED":
         score += 5
+    if relative_strength in ("outperforming market", "underperforming market"):
+        score += 20
     return round(min(score, 100))
 
 
@@ -230,9 +283,10 @@ def run_full_pipeline():
 
     for i, stock in enumerate(top_movers[:NEWSAPI_DAILY_LIMIT_BUFFER]):
         ticker_clean = stock["ticker"].replace(".NS", "")
-        print(f"[{i+1}/{len(top_movers)}] {ticker_clean} (volume ratio {stock['ratio']}x)...")
+        print(f"[{i+1}/{len(top_movers)}] {ticker_clean} (volume ratio {stock['ratio']}x, z={stock.get('z_score')})...")
 
         deal_explanation = check_stock_for_deals(ticker_clean, deals_dict)
+        deal_direction = analyze_deal_direction(deal_explanation)
         headlines = fetch_relevant_news(ticker_clean)
         sentiment = get_sentiment_for_headlines(headlines)
         price = get_current_price(ticker_clean)
@@ -240,16 +294,17 @@ def run_full_pipeline():
         relative_strength = classify_relative_strength(stock_change, nifty_change)
 
         signal_type, confidence = score_signal(
-            stock["ratio"], len(headlines), sentiment["score"],
-            bool(deal_explanation), relative_strength, stock_change
+            stock["ratio"], stock.get("z_score"), len(headlines), sentiment["score"],
+            deal_direction, relative_strength, stock_change
         )
 
         direction, direction_reason = determine_direction(
-            stock_change, relative_strength, sentiment["label"], sentiment["score"], signal_type
+            stock_change, relative_strength, sentiment["label"], signal_type, deal_direction
         )
 
         composite_score = compute_composite_score(
-            stock["ratio"], len(headlines), sentiment["score"], relative_strength, signal_type
+            stock["ratio"], stock.get("z_score"), len(headlines), sentiment["score"],
+            relative_strength, signal_type
         )
 
         risk_info = {
@@ -275,9 +330,18 @@ def run_full_pipeline():
             if range_data:
                 risk_info["day_range_note"] = range_data["note"]
 
+            # Downgrade if overbought + near day high (real risk found in accuracy data)
+            if "BUY" in direction and rsi_data and range_data:
+                is_overbought = rsi_data["rsi"] >= 70
+                is_near_high = range_data["position_pct"] >= 85
+                if is_overbought and is_near_high:
+                    confidence = "MEDIUM"
+                    direction_reason += " [Downgraded from HIGH: overbought and trading near today's high - elevated pullback risk]"
+
         final_signals.append({
             "ticker": ticker_clean,
             "volume_ratio": stock["ratio"],
+            "z_score": stock.get("z_score"),
             "sentiment_label": sentiment["label"],
             "sentiment_score": sentiment["score"],
             "headline_count": len(headlines),
@@ -291,6 +355,7 @@ def run_full_pipeline():
             "direction_reason": direction_reason,
             "composite_score": composite_score,
             "deal_explanation": deal_explanation,
+            "deal_direction": deal_direction,
             "stop_loss_pct": risk_info["stop_loss_pct"],
             "stop_loss_price": risk_info["stop_loss_price"],
             "target_price": risk_info["target_price"],
@@ -302,28 +367,35 @@ def run_full_pipeline():
 
         time.sleep(0.3)
 
-    confirmed_high = [s for s in final_signals if s["signal_type"] == "CONFIRMED" and s["confidence"] == "HIGH"]
-    unconfirmed_high = [s for s in final_signals if s["signal_type"] == "UNCONFIRMED" and s["confidence"] == "HIGH"]
+    confirmed_all = [s for s in final_signals if s["signal_type"] in ("CONFIRMED", "DEAL_CONFIRMED") and s["composite_score"] >= MIN_SCORE_THRESHOLD]
+    unconfirmed_high = [s for s in final_signals if s["signal_type"] == "UNCONFIRMED" and s["composite_score"] >= MIN_SCORE_THRESHOLD]
 
-    print(f"\n=== STAGE 5: {len(confirmed_high)} CONFIRMED-HIGH, {len(unconfirmed_high)} UNCONFIRMED-HIGH today ===")
+    print(f"\n=== STAGE 5: {len(confirmed_all)} CONFIRMED (news or deal), {len(unconfirmed_high)} UNCONFIRMED today ===")
 
-    if confirmed_high or unconfirmed_high:
-        message = format_message(confirmed_high, unconfirmed_high, nifty_change)
-        send_telegram_message(message)
+    print("\n=== STAGE 6: Sending CONFIRMED signal message ===")
+    if confirmed_all:
+        send_telegram_message(format_confirmed_message(confirmed_all, nifty_change))
     else:
-        send_telegram_message(f"[{RUN_LABEL}] No high-confidence signals (Nifty: {nifty_change}%). Quiet check.")
+        send_telegram_message(f"[{RUN_LABEL}] No CONFIRMED signals today (Nifty: {nifty_change}%).")
 
-    print("\n=== STAGE 6: Logging ALL signals for tracking ===")
+    print("\n=== STAGE 7: Sending UNCONFIRMED signal message ===")
+    if unconfirmed_high:
+        send_telegram_message(format_unconfirmed_message(unconfirmed_high, nifty_change))
+    else:
+        send_telegram_message(f"[{RUN_LABEL}] No UNCONFIRMED signals today (Nifty: {nifty_change}%).")
+
+    print("\n=== STAGE 8: Logging ALL signals for tracking ===")
     log_signals_to_csv(final_signals, nifty_change)
 
     return final_signals
 
 
-def format_signal_block(s):
+def format_evidence_block(s):
     lines = []
     dir_emoji = "[BUY]" if "BUY" in s["direction"] else "[SELL]" if "SELL" in s["direction"] else "[WATCH]"
 
     lines.append(f"{dir_emoji} {s['direction']}: {s['ticker']}  |  Score: {s['composite_score']}/100")
+    lines.append(f"Type: {s['signal_type']}")
     lines.append(f"Reason: {s['direction_reason']}")
     lines.append(f"Entry: Rs.{s['price_at_signal']}")
 
@@ -340,34 +412,40 @@ def format_signal_block(s):
         lines.append(f"Day range: {s['day_range_note']}")
 
     lines.append("Evidence:")
-    lines.append(f"  - Volume: {s['volume_ratio']}x normal average")
+    lines.append(f"  - Volume: {s['volume_ratio']}x normal average (z-score: {s['z_score']})")
     lines.append(f"  - Price move: {s['stock_change_pct']}% ({s['relative_strength']})")
+
     if s["signal_type"] == "CONFIRMED":
         lines.append(f"  - News: {s['headline_count']} relevant article(s), sentiment {s['sentiment_label']}")
         if s["sample_headline"]:
             lines.append(f"  - \"{s['sample_headline']}\"")
+    elif s["signal_type"] == "DEAL_CONFIRMED":
+        lines.append(f"  - Disclosed deal activity: {s['deal_direction']}")
+        if s["deal_explanation"]:
+            lines.append(f"  - {s['deal_explanation'][:200]}")
     else:
         lines.append(f"  - News: none found (unconfirmed - higher risk)")
 
     return "\n".join(lines)
 
 
-def format_message(confirmed_high, unconfirmed_high, nifty_change):
-    lines = [f"[{RUN_LABEL}] Signal Summary (Nifty: {nifty_change}%)\n"]
+def format_confirmed_message(signals, nifty_change):
+    lines = [f"[{RUN_LABEL}] CONFIRMED SIGNALS (Nifty: {nifty_change}%)\n"]
+    lines.append("Backed by real news or disclosed deal activity.\n")
+    for s in signals:
+        lines.append(format_evidence_block(s))
+        lines.append("")
+    lines.append("Decision-support only, not financial advice. Verify independently.")
+    return "\n".join(lines)
 
-    if confirmed_high:
-        lines.append("CONFIRMED SIGNALS\n")
-        for s in confirmed_high:
-            lines.append(format_signal_block(s))
-            lines.append("")
 
-    if unconfirmed_high:
-        lines.append("UNCONFIRMED SIGNALS (no news backing)\n")
-        for s in unconfirmed_high:
-            lines.append(format_signal_block(s))
-            lines.append("")
-
-    lines.append("Decision-support only, not financial advice. SELL/AVOID means exit if held, or avoid buying if not - cash market usually can't short. Score is not a validated accuracy metric. Verify independently.")
+def format_unconfirmed_message(signals, nifty_change):
+    lines = [f"[{RUN_LABEL}] UNCONFIRMED SIGNALS (Nifty: {nifty_change}%)\n"]
+    lines.append("Volume/price only - no news or deal corroboration. Higher risk, verify yourself.\n")
+    for s in signals:
+        lines.append(format_evidence_block(s))
+        lines.append("")
+    lines.append("Decision-support only, not financial advice. Verify independently before acting.")
     return "\n".join(lines)
 
 
@@ -379,20 +457,20 @@ def log_signals_to_csv(signals, nifty_change):
         writer = csv.writer(f)
         if not file_exists:
             writer.writerow([
-                "signal_date", "ticker", "volume_ratio", "sentiment_label", "sentiment_score",
+                "signal_date", "ticker", "volume_ratio", "z_score", "sentiment_label", "sentiment_score",
                 "headline_count", "sample_headline", "price_at_signal", "stock_change_pct",
                 "nifty_change_pct", "relative_strength", "signal_type", "confidence", "direction",
-                "direction_reason", "composite_score", "deal_explanation", "stop_loss_pct",
+                "direction_reason", "composite_score", "deal_explanation", "deal_direction", "stop_loss_pct",
                 "stop_loss_price", "target_price", "liquidity_risk", "rsi", "rsi_status", "day_range_note",
                 "checked_1d", "checked_3d", "checked_7d", "price_1d", "price_3d", "price_7d"
             ])
         today = datetime.now().strftime("%Y-%m-%d")
         for s in signals:
             writer.writerow([
-                today, s["ticker"], s["volume_ratio"], s["sentiment_label"], s["sentiment_score"],
+                today, s["ticker"], s["volume_ratio"], s["z_score"], s["sentiment_label"], s["sentiment_score"],
                 s["headline_count"], s["sample_headline"] or "", s["price_at_signal"], s["stock_change_pct"],
                 nifty_change, s["relative_strength"], s["signal_type"], s["confidence"], s["direction"],
-                s["direction_reason"], s["composite_score"], s["deal_explanation"] or "",
+                s["direction_reason"], s["composite_score"], s["deal_explanation"] or "", s["deal_direction"] or "",
                 s["stop_loss_pct"] or "", s["stop_loss_price"] or "", s["target_price"] or "",
                 s["liquidity_risk"] or "", s["rsi"] or "", s["rsi_status"] or "", s["day_range_note"] or "",
                 "", "", "", "", "", ""
@@ -404,4 +482,5 @@ if __name__ == "__main__":
     signals = run_full_pipeline()
     print("\n=== FINAL SUMMARY ===")
     for s in signals:
-        print(f"{s['ticker']}: {s['direction']} score={s['composite_score']} type={s['signal_type']}")
+        print(f"{s['ticker']}: {s['direction']} type={s['signal_type']} score={s['composite_score']}")
+
