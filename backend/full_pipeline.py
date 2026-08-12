@@ -413,7 +413,8 @@ def format_evidence_block(s):
 
     lines.append("Evidence:")
     lines.append(f"  - Volume: {s['volume_ratio']}x normal average (z-score: {s['z_score']})")
-    lines.append(f"  - Price move: {s['stock_change_pct']}% ({s['relative_strength']})")
+    change_display = f"{s['stock_change_pct']:.2f}%" if s['stock_change_pct'] is not None and not pd.isna(s['stock_change_pct']) else "unavailable"
+    lines.append(f"  - Price move: {change_display} ({s['relative_strength']})")
 
     if s["signal_type"] == "CONFIRMED":
         lines.append(f"  - News: {s['headline_count']} relevant article(s), sentiment {s['sentiment_label']}")
@@ -483,4 +484,5 @@ if __name__ == "__main__":
     print("\n=== FINAL SUMMARY ===")
     for s in signals:
         print(f"{s['ticker']}: {s['direction']} type={s['signal_type']} score={s['composite_score']}")
+
 
