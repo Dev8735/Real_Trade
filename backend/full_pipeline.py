@@ -60,7 +60,8 @@ UNCONFIRMED_MEDIUM_MIN_VOLUME = 3.0
 
 MIN_ZSCORE_FOR_HIGH = 3.0
 TARGET_RATIO = 1.5
-MIN_SCORE_THRESHOLD = 80  # only signals scoring this or higher get sent to Telegram
+MIN_SCORE_THRESHOLD = 80  # threshold for UNCONFIRMED signals
+CONFIRMED_MIN_SCORE_THRESHOLD = 90  # higher bar for CONFIRMED/DEAL_CONFIRMED - minimizes risk
 
 
 def load_company_names():
@@ -330,13 +331,13 @@ def run_full_pipeline():
             if range_data:
                 risk_info["day_range_note"] = range_data["note"]
 
-            # Downgrade if overbought + near day high (real risk found in accuracy data)
-            if "BUY" in direction and rsi_data and range_data:
+            # Downgrade if overbought (real evidence: 100% of losing BUY signals
+            # in our first accuracy check were overbought, regardless of day-range)
+            if "BUY" in direction and rsi_data:
                 is_overbought = rsi_data["rsi"] >= 70
-                is_near_high = range_data["position_pct"] >= 85
-                if is_overbought and is_near_high:
+                if is_overbought:
                     confidence = "MEDIUM"
-                    direction_reason += " [Downgraded from HIGH: overbought and trading near today's high - elevated pullback risk]"
+                    direction_reason += " [Downgraded from HIGH: overbought (RSI >= 70) - elevated pullback risk based on prior accuracy data]"
 
         final_signals.append({
             "ticker": ticker_clean,
@@ -367,7 +368,7 @@ def run_full_pipeline():
 
         time.sleep(0.3)
 
-    confirmed_all = [s for s in final_signals if s["signal_type"] in ("CONFIRMED", "DEAL_CONFIRMED") and s["composite_score"] >= MIN_SCORE_THRESHOLD]
+    confirmed_all = [s for s in final_signals if s["signal_type"] in ("CONFIRMED", "DEAL_CONFIRMED") and s["composite_score"] >= CONFIRMED_MIN_SCORE_THRESHOLD]
     unconfirmed_high = [s for s in final_signals if s["signal_type"] == "UNCONFIRMED" and s["composite_score"] >= MIN_SCORE_THRESHOLD]
 
     print(f"\n=== STAGE 5: {len(confirmed_all)} CONFIRMED (news or deal), {len(unconfirmed_high)} UNCONFIRMED today ===")
@@ -484,5 +485,7 @@ if __name__ == "__main__":
     print("\n=== FINAL SUMMARY ===")
     for s in signals:
         print(f"{s['ticker']}: {s['direction']} type={s['signal_type']} score={s['composite_score']}")
+
+
 
 
