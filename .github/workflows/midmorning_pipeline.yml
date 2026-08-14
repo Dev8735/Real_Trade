@@ -39,6 +39,10 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           mkdir -p data
           git add data/
-          git diff --staged --quiet || git commit -m "chore: update signals log [mid-morning run]"
-          git push
-
+          if git diff --staged --quiet; then
+            echo "No signal log changes to commit."
+            exit 0
+          fi
+          git commit -m "chore: update signals log [mid-morning run]"
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
