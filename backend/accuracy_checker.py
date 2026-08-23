@@ -2,30 +2,39 @@
 Accuracy Checker
 ----------------
 Goes through signals_log.csv, finds signals old enough to check (1d/3d/7d),
-fetches current price, and records the actual price move.
+and records the price AS OF that specific historical date - not just
+"today's current price" reused across all horizons.
 
 Win/loss is judged per-signal based on its own direction:
 - BUY signals: win if price went UP
-- SELL/AVOID signals: win if price went DOWN (correctly avoided/exited a decline)
-- WATCH signals: excluded from win-rate (no directional call was made)
+- SELL/AVOID signals: win if price went DOWN
+- WATCH signals: excluded from win-rate (no directional call made)
 """
 
 import pandas as pd
 import yfinance as yf
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SIGNALS_LOG_PATH = PROJECT_ROOT / "data" / "signals_log.csv"
 
 
-def get_price_now(ticker):
+def get_price_on_or_after(ticker, target_date):
+    """
+    Fetch the closing price for the first available trading day on or
+    after target_date - a true historical snapshot, not today's live price.
+    """
     try:
-        data = yf.download(f"{ticker}.NS", period="1d", interval="1d", progress=False)
+        start = target_date.strftime("%Y-%m-%d")
+        end = (target_date + timedelta(days=5)).strftime("%Y-%m-%d")
+        data = yf.download(f"{ticker}.NS", start=start, end=end, interval="1d", progress=False)
         if data.empty:
             return None
         close_col = data["Close"]
-        return float(close_col.iloc[-1]) if close_col.ndim == 1 else float(close_col.iloc[-1, 0])
+        if close_col.ndim > 1:
+            close_col = close_col.iloc[:, 0]
+        return float(close_col.iloc[0])  # first available trading day on/after target
     except Exception:
         return None
 
@@ -50,23 +59,24 @@ def update_accuracy():
     for idx, row in df.iterrows():
         age = days_since(str(row["signal_date"]))
         ticker = row["ticker"]
+        signal_date = datetime.strptime(str(row["signal_date"]), "%Y-%m-%d")
 
         if age >= 1 and (pd.isna(row.get("checked_1d")) or row.get("checked_1d") == ""):
-            price = get_price_now(ticker)
+            price = get_price_on_or_after(ticker, signal_date + timedelta(days=1))
             if price is not None:
                 df.at[idx, "price_1d"] = price
                 df.at[idx, "checked_1d"] = "done"
                 updated_count += 1
 
         if age >= 3 and (pd.isna(row.get("checked_3d")) or row.get("checked_3d") == ""):
-            price = get_price_now(ticker)
+            price = get_price_on_or_after(ticker, signal_date + timedelta(days=3))
             if price is not None:
                 df.at[idx, "price_3d"] = price
                 df.at[idx, "checked_3d"] = "done"
                 updated_count += 1
 
         if age >= 7 and (pd.isna(row.get("checked_7d")) or row.get("checked_7d") == ""):
-            price = get_price_now(ticker)
+            price = get_price_on_or_after(ticker, signal_date + timedelta(days=7))
             if price is not None:
                 df.at[idx, "price_7d"] = price
                 df.at[idx, "checked_7d"] = "done"
@@ -77,18 +87,13 @@ def update_accuracy():
 
 
 def is_win(row, move_pct):
-    """
-    Determine win/loss based on THIS row's own direction - not a shared
-    assumption across the whole tier.
-    """
     direction = str(row.get("direction", "")).upper()
-
     if "BUY" in direction:
         return move_pct > 0
     elif "SELL" in direction or "AVOID" in direction:
         return move_pct < 0
     else:
-        return None  # WATCH or unknown direction - no directional call, exclude from win-rate
+        return None
 
 
 def summarize_accuracy():
@@ -97,10 +102,6 @@ def summarize_accuracy():
         return
 
     df = pd.read_csv(SIGNALS_LOG_PATH)
-
-    if "direction" not in df.columns:
-        print("[WARNING] No 'direction' column found in log - these signals predate the BUY/SELL feature.")
-        print("[WARNING] Win-rate cannot be judged directionally for this data. Showing raw move stats only.\n")
 
     for horizon in ["1d", "3d", "7d"]:
         price_col = f"price_{horizon}"
@@ -132,14 +133,10 @@ def summarize_accuracy():
                 else:
                     print(f"  {conf}: {len(tier)} signals | avg move: {avg_move:.2f}% | "
                           f"all signals were WATCH (no directional call)")
-            else:
-                positive_rate = (tier["move_pct"] > 0).mean() * 100
-                print(f"  {conf}: {len(tier)} signals | avg move: {avg_move:.2f}% | "
-                      f"raw positive-move rate: {positive_rate:.1f}% (no direction data available)")
 
 
 if __name__ == "__main__":
-    print("=== Updating accuracy checkpoints ===")
+    print("=== Updating accuracy checkpoints (using true historical prices) ===")
     update_accuracy()
 
     print("\n=== Accuracy Summary ===")
