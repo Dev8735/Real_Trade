@@ -235,20 +235,38 @@ def determine_direction(stock_change_pct, relative_strength, sentiment_label, si
 
 def compute_composite_score(volume_ratio, z_score, relevant_article_count, sentiment_score,
                              relative_strength, signal_type):
+    """
+    Rebalanced so every signal type can theoretically reach 100 -
+    CONFIRMED and DEAL_CONFIRMED get credit for their specific evidence
+    type, UNCONFIRMED gets more weight on volume/z-score/divergence
+    since it has no news or deal evidence to draw from.
+    """
     score = 0
-    score += min(volume_ratio / 20 * 25, 25)
-    if z_score is not None:
-        score += min(max(z_score, 0) / 10 * 10, 10)
-    if signal_type == "CONFIRMED":
-        score += min(relevant_article_count / 3 * 15, 15)
-        score += min(abs(sentiment_score) / 3 * 10, 10)
-        score += 20
+
+    if signal_type == "UNCONFIRMED":
+        # No news/deal evidence available - weight volume/z-score/divergence more heavily
+        score += min(volume_ratio / 20 * 40, 40)
+        if z_score is not None:
+            score += min(max(z_score, 0) / 10 * 20, 20)
+        if relative_strength in ("outperforming market", "underperforming market"):
+            score += 40
     elif signal_type == "DEAL_CONFIRMED":
-        score += 25
-    elif signal_type == "UNCONFIRMED":
-        score += 5
-    if relative_strength in ("outperforming market", "underperforming market"):
+        score += min(volume_ratio / 20 * 25, 25)
+        if z_score is not None:
+            score += min(max(z_score, 0) / 10 * 10, 10)
+        score += 40  # real disclosed institutional activity - strong evidence
+        if relative_strength in ("outperforming market", "underperforming market"):
+            score += 25
+    else:  # CONFIRMED
+        score += min(volume_ratio / 20 * 20, 20)
+        if z_score is not None:
+            score += min(max(z_score, 0) / 10 * 10, 10)
+        score += min(relevant_article_count / 3 * 15, 15)
+        score += min(abs(sentiment_score) / 3 * 15, 15)
         score += 20
+        if relative_strength in ("outperforming market", "underperforming market"):
+            score += 20
+
     return round(min(score, 100))
 
 
@@ -502,4 +520,5 @@ if __name__ == "__main__":
     print("\n=== FINAL SUMMARY ===")
     for s in signals:
         print(f"{s['ticker']}: {s['direction']} type={s['signal_type']} score={s['composite_score']}")
+
 

@@ -1,27 +1,19 @@
-name: Daily NSE Signal Pipeline
-
+﻿name: Daily NSE Signal Pipeline
 on:
-  schedule:
-    # 8:30 AM IST = 3:00 AM UTC (IST is UTC+5:30)
-    - cron: "0 3 * * 1-5"
-  workflow_dispatch:  # allows manual trigger from GitHub UI for testing
-
+  workflow_dispatch:  # manual trigger only - no automatic schedule
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
       - name: Install dependencies
         run: |
           pip install python-dotenv requests pandas yfinance
-
       - name: Run full pipeline
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
@@ -30,4 +22,9 @@ jobs:
           RUN_LABEL: "Pre-Market 8:30 AM"
         run: |
           python backend/full_pipeline.py
-
+      - name: Notify on failure
+        if: failure()
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.BOT_TOKEN }}/sendMessage" \
+            -d chat_id="${{ secrets.CHAT_ID }}" \
+            -d text="ALERT: Daily NSE Signal Pipeline FAILED. Check: https://github.com/Dev8735/Real_Trade/actions"

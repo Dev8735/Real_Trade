@@ -1,9 +1,7 @@
 ﻿name: Daily Accuracy Checker
 
 on:
-  schedule:
-    - cron: "30 12 * * 1-5"
-  workflow_dispatch:
+  workflow_dispatch:  # manual trigger only - no automatic schedule
 
 jobs:
   run-accuracy-check:
@@ -26,6 +24,13 @@ jobs:
       - name: Run accuracy checker
         run: |
           python backend/accuracy_checker.py
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.BOT_TOKEN }}/sendMessage" \
+            -d chat_id="${{ secrets.CHAT_ID }}" \
+            -d text="ALERT: Daily Accuracy Checker FAILED. Check: https://github.com/Dev8735/Real_Trade/actions"
 
       - name: Commit updated accuracy artifacts
         run: |

@@ -1,10 +1,7 @@
 ﻿name: Daily Exit Evaluator
 
 on:
-  schedule:
-    # 3:45 PM IST = 10:15 UTC
-    - cron: "15 10 * * 1-5"
-  workflow_dispatch:
+  workflow_dispatch:  # manual trigger only - no automatic schedule
 
 jobs:
   run-exit-evaluator:
@@ -30,6 +27,13 @@ jobs:
           CHAT_ID: ${{ secrets.CHAT_ID }}
         run: |
           python backend/exit_evaluator.py
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.BOT_TOKEN }}/sendMessage" \
+            -d chat_id="${{ secrets.CHAT_ID }}" \
+            -d text="ALERT: Daily Exit Evaluator FAILED. Check: https://github.com/Dev8735/Real_Trade/actions"
 
       - name: Commit updated positions
         run: |

@@ -1,9 +1,7 @@
 ﻿name: Daily EOD Report
 
 on:
-  schedule:
-    - cron: "15 10 * * 1-5"
-  workflow_dispatch:
+  workflow_dispatch:  # manual trigger only - no automatic schedule
 
 jobs:
   run-eod-report:
@@ -27,3 +25,10 @@ jobs:
           CHAT_ID: ${{ secrets.CHAT_ID }}
         run: |
           python backend/eod_report.py
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.BOT_TOKEN }}/sendMessage" \
+            -d chat_id="${{ secrets.CHAT_ID }}" \
+            -d text="ALERT: Daily EOD Report FAILED. Check: https://github.com/Dev8735/Real_Trade/actions"
