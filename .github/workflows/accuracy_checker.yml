@@ -38,5 +38,10 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           mkdir -p data
           git add data/
-          git diff --staged --quiet || git commit -m "chore: update accuracy tracking data [automated]"
-          git push
+          if git diff --staged --quiet; then
+            echo "No accuracy artifact changes to commit."
+            exit 0
+          fi
+          git commit -m "chore: update accuracy tracking data [automated]"
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
